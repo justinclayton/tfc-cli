@@ -16,15 +16,14 @@ builds:
       - -s -w -X main.version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 brews:
   - repository:
       owner: justinclayton
       name: homebrew-tap
-      # GoReleaser needs a GitHub token with repo access to push the formula.
-      # Set GITHUB_TOKEN or use a token file via --token-file.
     homepage: https://github.com/justinclayton/tfc-cli
     description: CLI for HCP Terraform
     install: |
