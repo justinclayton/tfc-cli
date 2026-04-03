@@ -1,0 +1,44 @@
+version: 2
+project_name: tfc
+
+builds:
+  - main: .
+    binary: tfc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+brews:
+  - repository:
+      owner: justinclayton
+      name: homebrew-tap
+      # GoReleaser needs a GitHub token with repo access to push the formula.
+      # Set GITHUB_TOKEN or use a token file via --token-file.
+    homepage: https://github.com/justinclayton/tfc-cli
+    description: CLI for HCP Terraform
+    install: |
+      bin.install "tfc"
+    test: |
+      system "#{bin}/tfc", "--version"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
