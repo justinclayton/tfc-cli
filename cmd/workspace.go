@@ -379,6 +379,145 @@ var wsDeleteCmd = &cobra.Command{
 	},
 }
 
+// ── create ───────────────────────────────────────────────────────────────
+
+var (
+	wsCreateRepo       string
+	wsCreateBranch     string
+	wsCreateAutoApply  bool
+	wsCreateWorkingDir string
+	wsCreateVars       []string
+	wsCreateRun        bool
+)
+
+var wsCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a VCS-driven workspace",
+	Long: `Create a new workspace connected to a GitHub repository via VCS.
+
+The OAuth token is auto-discovered from the organization's configured OAuth clients.
+The workspace is created in the project specified by --project (or the default project).`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		wsName := args[0]
+
+		if wsCreateRepo == "" {
+			return fmt.Errorf("--repo is required (e.g. hashicorp/demo-vault-encryption-as-a-service)")
+		}
+
+		// Resolve project
+		var project *tfe.Project
+		if app.Project != "" {
+			projID, err := resolveProjectID(ctx, app.Project)
+			if err != nil {
+				return err
+			}
+			project = &tfe.Project{ID: projID}
+		}
+
+		// Auto-discover OAuth token
+		oauthTokenID, err := discoverOAuthToken(ctx)
+		if err != nil {
+			return err
+		}
+
+		// Build create options
+		opts := tfe.WorkspaceCreateOptions{
+			Name:      tfe.String(wsName),
+			AutoApply: tfe.Bool(wsCreateAutoApply),
+			VCSRepo: &tfe.VCSRepoOptions{
+				Identifier:   tfe.String(wsCreateRepo),
+				OAuthTokenID: tfe.String(oauthTokenID),
+			},
+			QueueAllRuns: tfe.Bool(true),
+		}
+
+		if wsCreateBranch != "" {
+			opts.VCSRepo.Branch = tfe.String(wsCreateBranch)
+		}
+		if wsCreateWorkingDir != "" {
+			opts.WorkingDirectory = tfe.String(wsCreateWorkingDir)
+		}
+		if project != nil {
+			opts.Project = project
+		}
+
+		ws, err := app.Client.Workspaces.Create(ctx, app.Org, opts)
+		if err != nil {
+			return fmt.Errorf("creating workspace: %w", err)
+		}
+
+		// Set workspace variables if provided
+		for _, v := range wsCreateVars {
+			key, val, found := strings.Cut(v, "=")
+			if !found {
+				return fmt.Errorf("invalid --var format %q (expected key=value)", v)
+			}
+			_, err := app.Client.Variables.Create(ctx, ws.ID, tfe.VariableCreateOptions{
+				Key:      tfe.String(key),
+				Value:    tfe.String(val),
+				Category: tfe.Category(tfe.CategoryTerraform),
+			})
+			if err != nil {
+				return fmt.Errorf("setting variable %s: %w", key, err)
+			}
+		}
+
+		app.Out.Success(fmt.Sprintf("Workspace %s created (%s)", ws.Name, ws.ID))
+		app.Out.Detail([]output.Field{
+			{Label: "Name", Value: ws.Name},
+			{Label: "ID", Value: ws.ID},
+			{Label: "VCS Repo", Value: wsCreateRepo},
+			{Label: "Branch", Value: wsCreateBranch},
+			{Label: "Auto Apply", Value: fmt.Sprintf("%t", wsCreateAutoApply)},
+			{Label: "URL", Value: fmt.Sprintf("https://app.terraform.io/app/%s/workspaces/%s", app.Org, ws.Name)},
+		})
+
+		// Optionally trigger a run
+		if wsCreateRun {
+			run, err := app.Client.Runs.Create(ctx, tfe.RunCreateOptions{
+				Workspace: ws,
+				Message:   tfe.String("Initial run via tfc CLI"),
+			})
+			if err != nil {
+				return fmt.Errorf("triggering run: %w", err)
+			}
+			app.Out.Success(fmt.Sprintf("Run %s queued (status: %s)", run.ID, run.Status))
+		}
+
+		return nil
+	},
+}
+
+// discoverOAuthToken finds the first GitHub OAuth token configured for the org.
+func discoverOAuthToken(ctx context.Context) (string, error) {
+	clients, err := app.Client.OAuthClients.List(ctx, app.Org, &tfe.OAuthClientListOptions{
+		Include: []tfe.OAuthClientIncludeOpt{tfe.OauthClientOauthTokens},
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing OAuth clients: %w", err)
+	}
+
+	// First pass: prefer GitHub-type clients
+	for _, oc := range clients.Items {
+		if oc.ServiceProvider == tfe.ServiceProviderGithub || oc.ServiceProvider == tfe.ServiceProviderGithubEE {
+			if len(oc.OAuthTokens) > 0 {
+				return oc.OAuthTokens[0].ID, nil
+			}
+		}
+	}
+
+	// Fallback: try any OAuth client
+	for _, oc := range clients.Items {
+		if len(oc.OAuthTokens) > 0 {
+			return oc.OAuthTokens[0].ID, nil
+		}
+	}
+
+	return "", fmt.Errorf("no OAuth token found for org %s (found %d OAuth clients)", app.Org, len(clients.Items))
+}
+
 func init() {
 	wsListCmd.Flags().StringVarP(&wsListSearch, "search", "s", "", "filter by workspace name (substring match)")
 	wsListCmd.Flags().StringVarP(&wsListTags, "tags", "t", "", "filter by tags (comma-separated)")
@@ -391,7 +530,14 @@ func init() {
 	wsDestroyCmd.Flags().BoolVar(&wsDestroyConfirm, "confirm", false, "skip confirmation prompt")
 	wsDeleteCmd.Flags().BoolVar(&wsDeleteConfirm, "confirm", false, "skip confirmation prompt")
 
-	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsDestroyCmd, wsDeleteCmd)
+	wsCreateCmd.Flags().StringVar(&wsCreateRepo, "repo", "", "VCS repository identifier (e.g. hashicorp/demo-vault-encryption-as-a-service)")
+	wsCreateCmd.Flags().StringVar(&wsCreateBranch, "branch", "", "VCS branch (defaults to repo default)")
+	wsCreateCmd.Flags().BoolVar(&wsCreateAutoApply, "auto-apply", false, "automatically apply successful plans")
+	wsCreateCmd.Flags().StringVar(&wsCreateWorkingDir, "working-dir", "", "Terraform working directory")
+	wsCreateCmd.Flags().StringArrayVar(&wsCreateVars, "var", nil, "workspace variable in key=value format (repeatable)")
+	wsCreateCmd.Flags().BoolVar(&wsCreateRun, "run", false, "trigger a run after creation")
+
+	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsDestroyCmd, wsDeleteCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
 
