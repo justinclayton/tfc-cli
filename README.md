@@ -60,6 +60,9 @@ tfc workspace runs my-workspace                 # list recent runs
 tfc workspace runs my-workspace -n 5            # last 5 runs
 tfc workspace show-run my-workspace             # show latest run details + errors
 tfc workspace show-run my-workspace run-abc123  # show specific run
+tfc workspace create my-workspace \              # create a VCS-driven workspace
+  --repo myorg/my-repo --branch main \
+  --auto-apply --var key=value
 tfc workspace destroy my-workspace              # queue a destroy run
 tfc workspace delete my-workspace               # permanently delete
 ```
