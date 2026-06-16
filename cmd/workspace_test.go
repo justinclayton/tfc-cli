@@ -153,6 +153,50 @@ func TestDefaultVal(t *testing.T) {
 	}
 }
 
+func TestFormatOutputValue(t *testing.T) {
+	cases := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"nil", nil, ""},
+		{"string bare", "https://example.com", "https://example.com"},
+		{"number", float64(42), "42"},
+		{"bool", true, "true"},
+		{"slice as json", []any{"a", "b"}, `["a","b"]`},
+		{"map as json", map[string]any{"k": "v"}, `{"k":"v"}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := formatOutputValue(c.in); got != c.want {
+				t.Errorf("formatOutputValue(%v) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+func TestOutputsCommand_Wiring(t *testing.T) {
+	cmd, _, err := workspaceCmd.Find([]string{"outputs"})
+	if err != nil {
+		t.Fatalf("outputs command not found: %v", err)
+	}
+	if cmd.Name() != "outputs" {
+		t.Fatalf("expected outputs command, got %q", cmd.Name())
+	}
+	if err := cmd.Args(cmd, []string{"my-ws"}); err != nil {
+		t.Errorf("outputs should accept exactly 1 arg: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"my-ws", "extra"}); err == nil {
+		t.Error("outputs should reject a second arg")
+	}
+	if cmd.Flags().Lookup("name") == nil {
+		t.Error("outputs command should have a --name flag")
+	}
+	if cmd.Flags().Lookup("show-sensitive") == nil {
+		t.Error("outputs command should have a --show-sensitive flag")
+	}
+}
+
 func TestApproveCommand_Wiring(t *testing.T) {
 	// The approve command must be registered under workspace with the
 	// "apply" alias, accept 1-2 args, and expose a -m/--message flag.

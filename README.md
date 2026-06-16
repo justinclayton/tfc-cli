@@ -60,6 +60,9 @@ tfc workspace runs my-workspace                 # list recent runs
 tfc workspace runs my-workspace -n 5            # last 5 runs
 tfc workspace show-run my-workspace             # show latest run details + errors
 tfc workspace show-run my-workspace run-abc123  # show specific run
+tfc workspace outputs my-workspace              # show current state outputs
+tfc workspace outputs my-workspace --show-sensitive   # reveal sensitive values
+tfc workspace outputs my-workspace --name endpoint_url  # print one output's value
 tfc workspace approve my-workspace              # approve the run awaiting confirmation
 tfc workspace approve my-workspace -m "LGTM"    # approve with a comment
 tfc workspace create my-workspace \              # create a VCS-driven workspace
@@ -70,6 +73,8 @@ tfc workspace delete my-workspace               # permanently delete
 ```
 
 The `show-run` command automatically detects errored runs and displays parsed Terraform diagnostics with source locations and error details.
+
+The `outputs` command reads a workspace's current state version outputs. Sensitive values are masked as `(sensitive)` by default — pass `--show-sensitive` to reveal them. HCP Terraform's list endpoint never returns sensitive values, so revealing them costs one extra API call per sensitive output (fetched individually). Use `--name <output>` to print a single value bare, which composes well in scripts: `URL=$(tfc workspace outputs my-workspace --name endpoint_url)`.
 
 ### Modules
 
