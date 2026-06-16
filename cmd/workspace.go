@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -146,6 +147,155 @@ var wsShowCmd = &cobra.Command{
 		})
 		return nil
 	},
+}
+
+// ── outputs ──────────────────────────────────────────────────────────────
+
+var (
+	wsOutputsName          string
+	wsOutputsShowSensitive bool
+)
+
+var wsOutputsCmd = &cobra.Command{
+	Use:   "outputs <workspace>",
+	Short: "Show the current state version outputs for a workspace",
+	Long: `Show the Terraform outputs from a workspace's current state version.
+
+Sensitive outputs are masked by default; pass --show-sensitive to reveal
+their values. Revealing a sensitive output costs one extra API call per
+output, because HCP Terraform's list endpoint never includes sensitive
+values and they must be fetched individually. Use --name to print a single
+output's value, which is handy for scripting.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+		ws, err := app.Client.Workspaces.Read(ctx, app.Org, args[0])
+		if err != nil {
+			return fmt.Errorf("reading workspace: %w", err)
+		}
+
+		list, err := app.Client.StateVersionOutputs.ReadCurrent(ctx, ws.ID)
+		if err != nil {
+			return fmt.Errorf("reading outputs: %w", err)
+		}
+
+		outputs := append([]*tfe.StateVersionOutput(nil), list.Items...)
+		sort.Slice(outputs, func(i, j int) bool { return outputs[i].Name < outputs[j].Name })
+
+		// --name: print a single output's value (no key, no table).
+		if wsOutputsName != "" {
+			var found *tfe.StateVersionOutput
+			for _, o := range outputs {
+				if o.Name == wsOutputsName {
+					found = o
+					break
+				}
+			}
+			if found == nil {
+				return fmt.Errorf("no output named %q in workspace %s", wsOutputsName, args[0])
+			}
+			if found.Sensitive && !wsOutputsShowSensitive {
+				return fmt.Errorf("output %q is sensitive; pass --show-sensitive to reveal", wsOutputsName)
+			}
+			value, err := revealValue(ctx, found)
+			if err != nil {
+				return err
+			}
+			if flagJSON {
+				app.Out.JSON(value)
+				return nil
+			}
+			fmt.Fprintln(app.Out.Writer(), formatOutputValue(value))
+			return nil
+		}
+
+		// JSON mode: emit a structured array preserving real value types.
+		if flagJSON {
+			type jsonOutput struct {
+				Name      string `json:"name"`
+				Type      string `json:"type"`
+				Sensitive bool   `json:"sensitive"`
+				Value     any    `json:"value"`
+			}
+			result := make([]jsonOutput, 0, len(outputs))
+			for _, o := range outputs {
+				val := o.Value
+				if o.Sensitive {
+					if !wsOutputsShowSensitive {
+						val = nil
+					} else {
+						val, err = revealValue(ctx, o)
+						if err != nil {
+							return err
+						}
+					}
+				}
+				result = append(result, jsonOutput{
+					Name:      o.Name,
+					Type:      o.Type,
+					Sensitive: o.Sensitive,
+					Value:     val,
+				})
+			}
+			app.Out.JSON(result)
+			return nil
+		}
+
+		// Human-readable / plain table.
+		headers := []string{"NAME", "VALUE"}
+		var rows [][]string
+		for _, o := range outputs {
+			var val string
+			switch {
+			case o.Sensitive && !wsOutputsShowSensitive:
+				val = "(sensitive)"
+			case o.Sensitive:
+				rv, err := revealValue(ctx, o)
+				if err != nil {
+					return err
+				}
+				val = formatOutputValue(rv)
+			default:
+				val = formatOutputValue(o.Value)
+			}
+			rows = append(rows, []string{o.Name, val})
+		}
+		app.Out.Table(headers, rows)
+		return nil
+	},
+}
+
+// revealValue returns an output's value. The current-state-version-outputs
+// list endpoint always returns nil for sensitive outputs, so for those we
+// fetch the value from the individual state-version-output resource, which
+// does include it. Non-sensitive values are returned as-is.
+func revealValue(ctx context.Context, o *tfe.StateVersionOutput) (any, error) {
+	if !o.Sensitive {
+		return o.Value, nil
+	}
+	full, err := app.Client.StateVersionOutputs.Read(ctx, o.ID)
+	if err != nil {
+		return nil, fmt.Errorf("reading sensitive output %q: %w", o.Name, err)
+	}
+	return full.Value, nil
+}
+
+// formatOutputValue renders a state version output value for human display.
+// Strings are printed bare (no surrounding quotes) so they compose cleanly in
+// scripts; complex values (lists, maps, etc.) are rendered as compact JSON.
+func formatOutputValue(v any) string {
+	switch val := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return val
+	default:
+		b, err := json.Marshal(val)
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
+		return string(b)
+	}
 }
 
 // ── run ──────────────────────────────────────────────────────────────────
@@ -601,7 +751,10 @@ func init() {
 	wsCreateCmd.Flags().StringArrayVar(&wsCreateVars, "var", nil, "workspace variable in key=value format (repeatable)")
 	wsCreateCmd.Flags().BoolVar(&wsCreateRun, "run", false, "trigger a run after creation")
 
-	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsApproveCmd, wsDestroyCmd, wsDeleteCmd)
+	wsOutputsCmd.Flags().StringVar(&wsOutputsName, "name", "", "print only the named output's value")
+	wsOutputsCmd.Flags().BoolVar(&wsOutputsShowSensitive, "show-sensitive", false, "reveal sensitive output values instead of masking them")
+
+	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsApproveCmd, wsOutputsCmd, wsDestroyCmd, wsDeleteCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
 
