@@ -60,6 +60,8 @@ tfc workspace runs my-workspace                 # list recent runs
 tfc workspace runs my-workspace -n 5            # last 5 runs
 tfc workspace show-run my-workspace             # show latest run details + errors
 tfc workspace show-run my-workspace run-abc123  # show specific run
+tfc workspace approve my-workspace              # approve the run awaiting confirmation
+tfc workspace approve my-workspace -m "LGTM"    # approve with a comment
 tfc workspace create my-workspace \              # create a VCS-driven workspace
   --repo myorg/my-repo --branch main \
   --auto-apply --var key=value

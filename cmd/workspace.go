@@ -239,21 +239,11 @@ var wsShowRunCmd = &cobra.Command{
 		if len(args) >= 2 {
 			runID = args[1]
 		} else {
-			// Fetch latest run for the workspace
-			ws, err := app.Client.Workspaces.Read(ctx, app.Org, args[0])
+			latest, err := latestRunID(ctx, args[0])
 			if err != nil {
-				return fmt.Errorf("reading workspace: %w", err)
+				return err
 			}
-			list, err := app.Client.Runs.List(ctx, ws.ID, &tfe.RunListOptions{
-				ListOptions: tfe.ListOptions{PageSize: 1},
-			})
-			if err != nil {
-				return fmt.Errorf("listing runs: %w", err)
-			}
-			if len(list.Items) == 0 {
-				return fmt.Errorf("no runs found for workspace %s", args[0])
-			}
-			runID = list.Items[0].ID
+			runID = latest
 		}
 
 		run, err := app.Client.Runs.ReadWithOptions(ctx, runID, &tfe.RunReadOptions{
@@ -292,6 +282,79 @@ var wsShowRunCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// ── approve ──────────────────────────────────────────────────────────────
+
+var wsApproveMsg string
+
+var wsApproveCmd = &cobra.Command{
+	Use:     "approve <workspace>",
+	Aliases: []string{"apply"},
+	Short:   "Approve (confirm) the run waiting for confirmation",
+	Long: `Approve (confirm) the run that is waiting for confirmation in a workspace.
+
+A workspace processes runs serially, so at most one run is ever awaiting
+confirmation at a time. This command finds that run and applies it; no run
+ID is needed.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+
+		run, err := confirmableRun(ctx, args[0])
+		if err != nil {
+			return err
+		}
+
+		if err := app.Client.Runs.Apply(ctx, run.ID, tfe.RunApplyOptions{
+			Comment: tfe.String(wsApproveMsg),
+		}); err != nil {
+			return fmt.Errorf("approving run: %w", err)
+		}
+
+		app.Out.Success(fmt.Sprintf("Run %s approved on workspace %s", run.ID, args[0]))
+		return nil
+	},
+}
+
+// confirmableRun returns the run awaiting confirmation in the named workspace.
+// Because a workspace processes runs serially, at most one run is confirmable
+// at any time. It returns a clear error when none are awaiting approval.
+func confirmableRun(ctx context.Context, wsName string) (*tfe.Run, error) {
+	ws, err := app.Client.Workspaces.Read(ctx, app.Org, wsName)
+	if err != nil {
+		return nil, fmt.Errorf("reading workspace: %w", err)
+	}
+	list, err := app.Client.Runs.List(ctx, ws.ID, &tfe.RunListOptions{
+		ListOptions: tfe.ListOptions{PageSize: 100},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing runs: %w", err)
+	}
+	for _, r := range list.Items {
+		if r.Actions.IsConfirmable {
+			return r, nil
+		}
+	}
+	return nil, fmt.Errorf("no run awaiting confirmation in workspace %s", wsName)
+}
+
+// latestRunID returns the ID of the most recent run for the named workspace.
+func latestRunID(ctx context.Context, wsName string) (string, error) {
+	ws, err := app.Client.Workspaces.Read(ctx, app.Org, wsName)
+	if err != nil {
+		return "", fmt.Errorf("reading workspace: %w", err)
+	}
+	list, err := app.Client.Runs.List(ctx, ws.ID, &tfe.RunListOptions{
+		ListOptions: tfe.ListOptions{PageSize: 1},
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing runs: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return "", fmt.Errorf("no runs found for workspace %s", wsName)
+	}
+	return list.Items[0].ID, nil
 }
 
 // ── destroy ──────────────────────────────────────────────────────────────
@@ -527,6 +590,7 @@ func init() {
 	wsRunsCmd.Flags().IntVarP(&wsRunsLimit, "limit", "n", 20, "maximum number of runs to show")
 
 	wsRunCmd.Flags().StringVarP(&wsRunMsg, "message", "m", "Triggered via tfc CLI", "run message")
+	wsApproveCmd.Flags().StringVarP(&wsApproveMsg, "message", "m", "Approved via tfc CLI", "approval comment")
 	wsDestroyCmd.Flags().BoolVar(&wsDestroyConfirm, "confirm", false, "skip confirmation prompt")
 	wsDeleteCmd.Flags().BoolVar(&wsDeleteConfirm, "confirm", false, "skip confirmation prompt")
 
@@ -537,7 +601,7 @@ func init() {
 	wsCreateCmd.Flags().StringArrayVar(&wsCreateVars, "var", nil, "workspace variable in key=value format (repeatable)")
 	wsCreateCmd.Flags().BoolVar(&wsCreateRun, "run", false, "trigger a run after creation")
 
-	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsDestroyCmd, wsDeleteCmd)
+	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsApproveCmd, wsDestroyCmd, wsDeleteCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
 
@@ -564,9 +628,9 @@ type tfDiagnostic struct {
 }
 
 type tfRange struct {
-	Filename string    `json:"filename"`
-	Start    tfPos     `json:"start"`
-	End      tfPos     `json:"end"`
+	Filename string `json:"filename"`
+	Start    tfPos  `json:"start"`
+	End      tfPos  `json:"end"`
 }
 
 type tfPos struct {
@@ -575,11 +639,11 @@ type tfPos struct {
 }
 
 type tfSnippet struct {
-	Context            string `json:"context"`
-	Code               string `json:"code"`
-	StartLine          int    `json:"start_line"`
-	HighlightStartOff  int    `json:"highlight_start_offset"`
-	HighlightEndOff    int    `json:"highlight_end_offset"`
+	Context           string `json:"context"`
+	Code              string `json:"code"`
+	StartLine         int    `json:"start_line"`
+	HighlightStartOff int    `json:"highlight_start_offset"`
+	HighlightEndOff   int    `json:"highlight_end_offset"`
 }
 
 // fetchErrorLog reads the log from the errored phase and returns
