@@ -20,5 +20,9 @@ jobs:
         id: tag
         uses: mathieudutour/github-tag-action@v6.2
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Must be a PAT, not the default GITHUB_TOKEN: tags pushed with
+          # GITHUB_TOKEN do not trigger other workflows (anti-recursion rule),
+          # so the release.yaml (on: push tags) would never fire. HOMEBREW_TAP_TOKEN
+          # is a classic PAT with repo scope and is already used by release.yaml.
+          github_token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           default_bump: patch
