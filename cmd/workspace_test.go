@@ -174,15 +174,13 @@ func TestApproveCommand_Wiring(t *testing.T) {
 		t.Errorf("expected 'apply' alias on approve command, got %v", cmd.Aliases)
 	}
 
-	// Valid arg counts: 1 (workspace only) and 2 (workspace + run-id).
+	// Valid arg count: exactly 1 (workspace). No run-id is needed because a
+	// workspace has at most one run awaiting confirmation at a time.
 	if err := cmd.Args(cmd, []string{"my-ws"}); err != nil {
 		t.Errorf("approve should accept 1 arg: %v", err)
 	}
-	if err := cmd.Args(cmd, []string{"my-ws", "run-123"}); err != nil {
-		t.Errorf("approve should accept 2 args: %v", err)
-	}
-	if err := cmd.Args(cmd, []string{"my-ws", "run-123", "extra"}); err == nil {
-		t.Error("approve should reject 3 args")
+	if err := cmd.Args(cmd, []string{"my-ws", "run-123"}); err == nil {
+		t.Error("approve should reject a second (run-id) arg")
 	}
 
 	if cmd.Flags().Lookup("message") == nil {

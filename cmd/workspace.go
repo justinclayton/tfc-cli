@@ -289,34 +289,21 @@ var wsShowRunCmd = &cobra.Command{
 var wsApproveMsg string
 
 var wsApproveCmd = &cobra.Command{
-	Use:     "approve <workspace> [run-id]",
+	Use:     "approve <workspace>",
 	Aliases: []string{"apply"},
-	Short:   "Approve (confirm) a run waiting for confirmation (defaults to latest)",
-	Args:    cobra.RangeArgs(1, 2),
+	Short:   "Approve (confirm) the run waiting for confirmation",
+	Long: `Approve (confirm) the run that is waiting for confirmation in a workspace.
+
+A workspace processes runs serially, so at most one run is ever awaiting
+confirmation at a time. This command finds that run and applies it; no run
+ID is needed.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
-		var run *tfe.Run
-		if len(args) >= 2 {
-			// Explicit run-id: read it and validate it's confirmable.
-			r, err := app.Client.Runs.Read(ctx, args[1])
-			if err != nil {
-				return fmt.Errorf("reading run: %w", err)
-			}
-			if !r.Actions.IsConfirmable {
-				return fmt.Errorf("run %s is not waiting for confirmation (status: %s)", r.ID, r.Status)
-			}
-			run = r
-		} else {
-			// No run-id: find the single run awaiting confirmation. A workspace
-			// processes runs serially, so at most one run is ever confirmable at
-			// a time — but it may not be the newest run if a later run is queued
-			// behind it, so we scan rather than assume "latest".
-			r, err := confirmableRun(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			run = r
+		run, err := confirmableRun(ctx, args[0])
+		if err != nil {
+			return err
 		}
 
 		if err := app.Client.Runs.Apply(ctx, run.ID, tfe.RunApplyOptions{
