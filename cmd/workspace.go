@@ -296,24 +296,27 @@ var wsApproveCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
-		var runID string
+		var run *tfe.Run
 		if len(args) >= 2 {
-			runID = args[1]
+			// Explicit run-id: read it and validate it's confirmable.
+			r, err := app.Client.Runs.Read(ctx, args[1])
+			if err != nil {
+				return fmt.Errorf("reading run: %w", err)
+			}
+			if !r.Actions.IsConfirmable {
+				return fmt.Errorf("run %s is not waiting for confirmation (status: %s)", r.ID, r.Status)
+			}
+			run = r
 		} else {
-			latest, err := latestRunID(ctx, args[0])
+			// No run-id: find the single run awaiting confirmation. A workspace
+			// processes runs serially, so at most one run is ever confirmable at
+			// a time — but it may not be the newest run if a later run is queued
+			// behind it, so we scan rather than assume "latest".
+			r, err := confirmableRun(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			runID = latest
-		}
-
-		run, err := app.Client.Runs.Read(ctx, runID)
-		if err != nil {
-			return fmt.Errorf("reading run: %w", err)
-		}
-
-		if !run.Actions.IsConfirmable {
-			return fmt.Errorf("run %s is not waiting for confirmation (status: %s)", run.ID, run.Status)
+			run = r
 		}
 
 		if err := app.Client.Runs.Apply(ctx, run.ID, tfe.RunApplyOptions{
@@ -325,6 +328,28 @@ var wsApproveCmd = &cobra.Command{
 		app.Out.Success(fmt.Sprintf("Run %s approved on workspace %s", run.ID, args[0]))
 		return nil
 	},
+}
+
+// confirmableRun returns the run awaiting confirmation in the named workspace.
+// Because a workspace processes runs serially, at most one run is confirmable
+// at any time. It returns a clear error when none are awaiting approval.
+func confirmableRun(ctx context.Context, wsName string) (*tfe.Run, error) {
+	ws, err := app.Client.Workspaces.Read(ctx, app.Org, wsName)
+	if err != nil {
+		return nil, fmt.Errorf("reading workspace: %w", err)
+	}
+	list, err := app.Client.Runs.List(ctx, ws.ID, &tfe.RunListOptions{
+		ListOptions: tfe.ListOptions{PageSize: 100},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing runs: %w", err)
+	}
+	for _, r := range list.Items {
+		if r.Actions.IsConfirmable {
+			return r, nil
+		}
+	}
+	return nil, fmt.Errorf("no run awaiting confirmation in workspace %s", wsName)
 }
 
 // latestRunID returns the ID of the most recent run for the named workspace.

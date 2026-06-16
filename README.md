@@ -60,7 +60,7 @@ tfc workspace runs my-workspace                 # list recent runs
 tfc workspace runs my-workspace -n 5            # last 5 runs
 tfc workspace show-run my-workspace             # show latest run details + errors
 tfc workspace show-run my-workspace run-abc123  # show specific run
-tfc workspace approve my-workspace              # approve latest run awaiting confirmation
+tfc workspace approve my-workspace              # approve the run awaiting confirmation
 tfc workspace approve my-workspace run-abc123 \  # approve a specific run
   -m "Approved via CLI"
 tfc workspace create my-workspace \              # create a VCS-driven workspace
