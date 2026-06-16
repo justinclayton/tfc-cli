@@ -239,21 +239,11 @@ var wsShowRunCmd = &cobra.Command{
 		if len(args) >= 2 {
 			runID = args[1]
 		} else {
-			// Fetch latest run for the workspace
-			ws, err := app.Client.Workspaces.Read(ctx, app.Org, args[0])
+			latest, err := latestRunID(ctx, args[0])
 			if err != nil {
-				return fmt.Errorf("reading workspace: %w", err)
+				return err
 			}
-			list, err := app.Client.Runs.List(ctx, ws.ID, &tfe.RunListOptions{
-				ListOptions: tfe.ListOptions{PageSize: 1},
-			})
-			if err != nil {
-				return fmt.Errorf("listing runs: %w", err)
-			}
-			if len(list.Items) == 0 {
-				return fmt.Errorf("no runs found for workspace %s", args[0])
-			}
-			runID = list.Items[0].ID
+			runID = latest
 		}
 
 		run, err := app.Client.Runs.ReadWithOptions(ctx, runID, &tfe.RunReadOptions{
@@ -292,6 +282,67 @@ var wsShowRunCmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+// ── approve ──────────────────────────────────────────────────────────────
+
+var wsApproveMsg string
+
+var wsApproveCmd = &cobra.Command{
+	Use:     "approve <workspace> [run-id]",
+	Aliases: []string{"apply"},
+	Short:   "Approve (confirm) a run waiting for confirmation (defaults to latest)",
+	Args:    cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := context.Background()
+
+		var runID string
+		if len(args) >= 2 {
+			runID = args[1]
+		} else {
+			latest, err := latestRunID(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			runID = latest
+		}
+
+		run, err := app.Client.Runs.Read(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("reading run: %w", err)
+		}
+
+		if !run.Actions.IsConfirmable {
+			return fmt.Errorf("run %s is not waiting for confirmation (status: %s)", run.ID, run.Status)
+		}
+
+		if err := app.Client.Runs.Apply(ctx, run.ID, tfe.RunApplyOptions{
+			Comment: tfe.String(wsApproveMsg),
+		}); err != nil {
+			return fmt.Errorf("approving run: %w", err)
+		}
+
+		app.Out.Success(fmt.Sprintf("Run %s approved on workspace %s", run.ID, args[0]))
+		return nil
+	},
+}
+
+// latestRunID returns the ID of the most recent run for the named workspace.
+func latestRunID(ctx context.Context, wsName string) (string, error) {
+	ws, err := app.Client.Workspaces.Read(ctx, app.Org, wsName)
+	if err != nil {
+		return "", fmt.Errorf("reading workspace: %w", err)
+	}
+	list, err := app.Client.Runs.List(ctx, ws.ID, &tfe.RunListOptions{
+		ListOptions: tfe.ListOptions{PageSize: 1},
+	})
+	if err != nil {
+		return "", fmt.Errorf("listing runs: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return "", fmt.Errorf("no runs found for workspace %s", wsName)
+	}
+	return list.Items[0].ID, nil
 }
 
 // ── destroy ──────────────────────────────────────────────────────────────
@@ -527,6 +578,7 @@ func init() {
 	wsRunsCmd.Flags().IntVarP(&wsRunsLimit, "limit", "n", 20, "maximum number of runs to show")
 
 	wsRunCmd.Flags().StringVarP(&wsRunMsg, "message", "m", "Triggered via tfc CLI", "run message")
+	wsApproveCmd.Flags().StringVarP(&wsApproveMsg, "message", "m", "Approved via tfc CLI", "approval comment")
 	wsDestroyCmd.Flags().BoolVar(&wsDestroyConfirm, "confirm", false, "skip confirmation prompt")
 	wsDeleteCmd.Flags().BoolVar(&wsDeleteConfirm, "confirm", false, "skip confirmation prompt")
 
@@ -537,7 +589,7 @@ func init() {
 	wsCreateCmd.Flags().StringArrayVar(&wsCreateVars, "var", nil, "workspace variable in key=value format (repeatable)")
 	wsCreateCmd.Flags().BoolVar(&wsCreateRun, "run", false, "trigger a run after creation")
 
-	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsDestroyCmd, wsDeleteCmd)
+	workspaceCmd.AddCommand(wsListCmd, wsShowCmd, wsCreateCmd, wsRunCmd, wsRunsCmd, wsShowRunCmd, wsApproveCmd, wsDestroyCmd, wsDeleteCmd)
 	rootCmd.AddCommand(workspaceCmd)
 }
 
@@ -564,9 +616,9 @@ type tfDiagnostic struct {
 }
 
 type tfRange struct {
-	Filename string    `json:"filename"`
-	Start    tfPos     `json:"start"`
-	End      tfPos     `json:"end"`
+	Filename string `json:"filename"`
+	Start    tfPos  `json:"start"`
+	End      tfPos  `json:"end"`
 }
 
 type tfPos struct {
@@ -575,11 +627,11 @@ type tfPos struct {
 }
 
 type tfSnippet struct {
-	Context            string `json:"context"`
-	Code               string `json:"code"`
-	StartLine          int    `json:"start_line"`
-	HighlightStartOff  int    `json:"highlight_start_offset"`
-	HighlightEndOff    int    `json:"highlight_end_offset"`
+	Context           string `json:"context"`
+	Code              string `json:"code"`
+	StartLine         int    `json:"start_line"`
+	HighlightStartOff int    `json:"highlight_start_offset"`
+	HighlightEndOff   int    `json:"highlight_end_offset"`
 }
 
 // fetchErrorLog reads the log from the errored phase and returns

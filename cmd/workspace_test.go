@@ -152,3 +152,40 @@ func TestDefaultVal(t *testing.T) {
 		t.Errorf("expected 'fallback', got %q", got)
 	}
 }
+
+func TestApproveCommand_Wiring(t *testing.T) {
+	// The approve command must be registered under workspace with the
+	// "apply" alias, accept 1-2 args, and expose a -m/--message flag.
+	cmd, _, err := workspaceCmd.Find([]string{"approve"})
+	if err != nil {
+		t.Fatalf("approve command not found: %v", err)
+	}
+	if cmd.Name() != "approve" {
+		t.Fatalf("expected approve command, got %q", cmd.Name())
+	}
+
+	hasApplyAlias := false
+	for _, a := range cmd.Aliases {
+		if a == "apply" {
+			hasApplyAlias = true
+		}
+	}
+	if !hasApplyAlias {
+		t.Errorf("expected 'apply' alias on approve command, got %v", cmd.Aliases)
+	}
+
+	// Valid arg counts: 1 (workspace only) and 2 (workspace + run-id).
+	if err := cmd.Args(cmd, []string{"my-ws"}); err != nil {
+		t.Errorf("approve should accept 1 arg: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"my-ws", "run-123"}); err != nil {
+		t.Errorf("approve should accept 2 args: %v", err)
+	}
+	if err := cmd.Args(cmd, []string{"my-ws", "run-123", "extra"}); err == nil {
+		t.Error("approve should reject 3 args")
+	}
+
+	if cmd.Flags().Lookup("message") == nil {
+		t.Error("approve command should have a --message flag")
+	}
+}
