@@ -67,7 +67,7 @@ tfc workspace approve my-workspace              # approve the run awaiting confi
 tfc workspace approve my-workspace -m "LGTM"    # approve with a comment
 tfc workspace create my-workspace \              # create a VCS-driven workspace
   --repo myorg/my-repo --branch main \
-  --auto-apply --var key=value
+  --auto-apply --var key=value --env-var AWS_REGION=us-east-1
 tfc workspace destroy my-workspace              # queue a destroy run
 tfc workspace delete my-workspace               # permanently delete
 ```
@@ -84,8 +84,11 @@ tfc module show my-module --provider aws                    # module details + v
 tfc module provision my-module --provider aws               # no-code provision (interactive)
 tfc module provision my-module --provider aws \
   --var region=us-east-1 --var instance_type=t3.micro \
+  --env-var AWS_REGION=us-east-1 \
   --name my-new-workspace                                   # non-interactive
 ```
+
+Use `--var` for Terraform variables and `--env-var` for environment variables.
 
 ### Variable Sets
 

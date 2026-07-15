@@ -600,6 +600,7 @@ var (
 	wsCreateAutoApply  bool
 	wsCreateWorkingDir string
 	wsCreateVars       []string
+	wsCreateEnvVars    []string
 	wsCreateRun        bool
 )
 
@@ -662,19 +663,11 @@ The workspace is created in the project specified by --project (or the default p
 		}
 
 		// Set workspace variables if provided
-		for _, v := range wsCreateVars {
-			key, val, found := strings.Cut(v, "=")
-			if !found {
-				return fmt.Errorf("invalid --var format %q (expected key=value)", v)
-			}
-			_, err := app.Client.Variables.Create(ctx, ws.ID, tfe.VariableCreateOptions{
-				Key:      tfe.String(key),
-				Value:    tfe.String(val),
-				Category: tfe.Category(tfe.CategoryTerraform),
-			})
-			if err != nil {
-				return fmt.Errorf("setting variable %s: %w", key, err)
-			}
+		if err := createWorkspaceVars(ctx, ws.ID, wsCreateVars, tfe.CategoryTerraform, "--var"); err != nil {
+			return err
+		}
+		if err := createWorkspaceVars(ctx, ws.ID, wsCreateEnvVars, tfe.CategoryEnv, "--env-var"); err != nil {
+			return err
 		}
 
 		app.Out.Success(fmt.Sprintf("Workspace %s created (%s)", ws.Name, ws.ID))
@@ -701,6 +694,26 @@ The workspace is created in the project specified by --project (or the default p
 
 		return nil
 	},
+}
+
+// createWorkspaceVars creates workspace variables of the given category from a
+// slice of key=value strings. flagName is used for error messages.
+func createWorkspaceVars(ctx context.Context, wsID string, vars []string, category tfe.CategoryType, flagName string) error {
+	for _, v := range vars {
+		key, val, found := strings.Cut(v, "=")
+		if !found {
+			return fmt.Errorf("invalid %s format %q (expected key=value)", flagName, v)
+		}
+		_, err := app.Client.Variables.Create(ctx, wsID, tfe.VariableCreateOptions{
+			Key:      tfe.String(key),
+			Value:    tfe.String(val),
+			Category: tfe.Category(category),
+		})
+		if err != nil {
+			return fmt.Errorf("setting variable %s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // discoverOAuthToken finds the first GitHub OAuth token configured for the org.
@@ -748,7 +761,8 @@ func init() {
 	wsCreateCmd.Flags().StringVar(&wsCreateBranch, "branch", "", "VCS branch (defaults to repo default)")
 	wsCreateCmd.Flags().BoolVar(&wsCreateAutoApply, "auto-apply", false, "automatically apply successful plans")
 	wsCreateCmd.Flags().StringVar(&wsCreateWorkingDir, "working-dir", "", "Terraform working directory")
-	wsCreateCmd.Flags().StringArrayVar(&wsCreateVars, "var", nil, "workspace variable in key=value format (repeatable)")
+	wsCreateCmd.Flags().StringArrayVar(&wsCreateVars, "var", nil, "Terraform workspace variable in key=value format (repeatable)")
+	wsCreateCmd.Flags().StringArrayVar(&wsCreateEnvVars, "env-var", nil, "environment workspace variable in key=value format (repeatable)")
 	wsCreateCmd.Flags().BoolVar(&wsCreateRun, "run", false, "trigger a run after creation")
 
 	wsOutputsCmd.Flags().StringVar(&wsOutputsName, "name", "", "print only the named output's value")
