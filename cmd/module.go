@@ -113,6 +113,7 @@ var modShowCmd = &cobra.Command{
 var (
 	provisionName     string
 	provisionVars     []string
+	provisionEnvVars  []string
 	provisionProvider string
 )
 
@@ -122,7 +123,8 @@ var modProvisionCmd = &cobra.Command{
 	Long: `Creates a new workspace from a no-code enabled private registry module.
 
 In interactive mode, you'll be prompted for any module variables.
-In non-interactive mode (or piped), provide all variables via --var flags.`,
+In non-interactive mode (or piped), provide all variables via --var flags.
+Environment variables can be set with --env-var.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
@@ -170,6 +172,16 @@ In non-interactive mode (or piped), provide all variables via --var flags.`,
 			varMap[parts[0]] = parts[1]
 		}
 
+		// Parse --env-var flags
+		envVarMap := make(map[string]string)
+		for _, v := range provisionEnvVars {
+			parts := strings.SplitN(v, "=", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("invalid --env-var format %q (expected key=value)", v)
+			}
+			envVarMap[parts[0]] = parts[1]
+		}
+
 		// Prompt for missing variables if interactive
 		if isInteractive() && ncm.VariableOptions != nil {
 			reader := bufio.NewReader(os.Stdin)
@@ -208,6 +220,13 @@ In non-interactive mode (or piped), provide all variables via --var flags.`,
 				Category: tfe.CategoryTerraform,
 			})
 		}
+		for k, v := range envVarMap {
+			tfVars = append(tfVars, &tfe.Variable{
+				Key:      k,
+				Value:    v,
+				Category: tfe.CategoryEnv,
+			})
+		}
 
 		createOpts := &tfe.RegistryNoCodeModuleCreateWorkspaceOptions{
 			Name:      wsName,
@@ -242,7 +261,8 @@ func init() {
 	modShowCmd.MarkFlagRequired("provider")
 
 	modProvisionCmd.Flags().StringVar(&provisionName, "name", "", "workspace name (auto-generated if omitted)")
-	modProvisionCmd.Flags().StringArrayVar(&provisionVars, "var", nil, "variable in key=value format (repeatable)")
+	modProvisionCmd.Flags().StringArrayVar(&provisionVars, "var", nil, "Terraform variable in key=value format (repeatable)")
+	modProvisionCmd.Flags().StringArrayVar(&provisionEnvVars, "env-var", nil, "environment variable in key=value format (repeatable)")
 	modProvisionCmd.Flags().StringVar(&provisionProvider, "provider", "", "module provider (required)")
 	modProvisionCmd.MarkFlagRequired("provider")
 
